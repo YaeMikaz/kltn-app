@@ -1,26 +1,40 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Dimensions, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { LineChart } from 'react-native-chart-kit';
 import { getSensorHistory } from '../services/api';
+import { COLORS, SHADOWS, RADIUS } from '../constants/theme';
 
-const COLORS = {
-  bg: '#F1F8E9',
-  primary: '#2E7D32',
-  text: '#1B4332',
-  danger: '#C62828',
-  white: '#ffffff',
-};
-
-const chartWidth = Dimensions.get('window').width - 32;
-// Số điểm dữ liệu hiển thị trên mỗi biểu đồ (tăng/giảm node tại đây).
-const POINT_LIMIT = 8;
-// Hiển thị nhãn thời gian mỗi N điểm để tránh rối trục X.
+const chartWidth = Dimensions.get('window').width - 64;
 const SHOW_LABEL_EVERY = 2;
 
-function MetricChart({ title, labels, values, color, unit, decimalPlaces = 2 }) {
+const FILTERS = [
+  { label: 'Gần nhất', value: 8 },
+  { label: '15 mốc', value: 15 },
+  { label: '30 mốc', value: 30 },
+  { label: 'Tất cả', value: 50 },
+];
+
+function MetricChart({ title, labels, values, color, unit, icon, decimalPlaces = 2 }) {
   return (
-    <View style={styles.chartCard}>
-      <Text style={styles.chartTitle}>{title}</Text>
+    <View style={[styles.chartCard, SHADOWS.md]}>
+      <View style={styles.chartHeader}>
+        <View style={[styles.chartIconCircle, { backgroundColor: `${color}18` }]}>
+          <Ionicons name={icon} size={18} color={color} />
+        </View>
+        <View>
+          <Text style={styles.chartTitle}>{title}</Text>
+          <Text style={styles.chartUnit}>Đơn vị: {unit}</Text>
+        </View>
+        {values.length > 0 ? (
+          <View style={styles.chartStat}>
+            <Text style={[styles.chartStatValue, { color }]}>
+              {values[values.length - 1]?.toFixed(decimalPlaces)}
+            </Text>
+            <Text style={styles.chartStatLabel}>hiện tại</Text>
+          </View>
+        ) : null}
+      </View>
       {values.length > 0 ? (
         <LineChart
           data={{
@@ -28,28 +42,40 @@ function MetricChart({ title, labels, values, color, unit, decimalPlaces = 2 }) 
             datasets: [{ data: values }],
           }}
           width={chartWidth}
-          height={220}
+          height={180}
           yAxisSuffix=""
           chartConfig={{
-            backgroundColor: '#ffffff',
-            backgroundGradientFrom: '#ffffff',
-            backgroundGradientTo: '#ffffff',
+            backgroundColor: COLORS.white,
+            backgroundGradientFrom: COLORS.white,
+            backgroundGradientTo: COLORS.white,
             decimalPlaces,
             color: (opacity = 1) => `${color}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`,
-            labelColor: (opacity = 1) => `rgba(27, 67, 50, ${opacity})`,
+            labelColor: () => COLORS.textMuted,
             propsForDots: {
-              r: '4',
+              r: '3',
               strokeWidth: '2',
               stroke: color,
+              fill: COLORS.white,
             },
+            propsForBackgroundLines: {
+              strokeDasharray: '4 4',
+              stroke: '#E8EDE8',
+              strokeWidth: 1,
+            },
+            fillShadowGradientFrom: color,
+            fillShadowGradientTo: `${color}05`,
+            fillShadowGradientOpacity: 0.15,
           }}
           style={styles.chart}
           bezier
+          withShadow={false}
         />
       ) : (
-        <Text style={styles.emptyText}>Chưa có dữ liệu cho {title}.</Text>
+        <View style={styles.emptyChart}>
+          <Ionicons name="bar-chart-outline" size={32} color={COLORS.accent} />
+          <Text style={styles.emptyText}>Chưa có dữ liệu cho {title}.</Text>
+        </View>
       )}
-      <Text style={styles.unitText}>Đơn vị: {unit}</Text>
     </View>
   );
 }
@@ -58,6 +84,7 @@ export default function HistoryScreen() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeFilter, setActiveFilter] = useState(8);
 
   const fetchHistory = async () => {
     try {
@@ -67,7 +94,7 @@ export default function HistoryScreen() {
     } catch (err) {
       const message = err.code === 'ECONNABORTED'
         ? 'Server phản hồi quá chậm (quá 10 giây).'
-        : 'Không thể lấy lịch sử dữ liệu.';
+        : 'Không thể lấy lịch sử dữ liệu cảm biến.';
       setError(message);
     } finally {
       setLoading(false);
@@ -79,19 +106,15 @@ export default function HistoryScreen() {
   }, []);
 
   const latestPoints = useMemo(() => {
-    // API history đang trả về mới nhất -> cũ nhất, cần đảo ngược để vẽ theo trục thời gian tăng dần.
-    return [...history].slice(0, POINT_LIMIT).reverse();
-  }, [history]);
+    return [...history].slice(0, activeFilter).reverse();
+  }, [history, activeFilter]);
 
   const labels = useMemo(() => {
     return latestPoints.map((item, index) => {
       const timeLabel = new Date(item.timestamp).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
-        second: '2-digit',
       });
-
-      // Chỉ hiển thị một phần nhãn để dễ nhìn, vẫn giữ đủ số node dữ liệu.
       return index % SHOW_LABEL_EVERY === 0 ? timeLabel : '';
     });
   }, [latestPoints]);
@@ -105,40 +128,77 @@ export default function HistoryScreen() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Đang tải lịch sử...</Text>
+        <Text style={styles.loadingText}>Đang tải lịch sử đo...</Text>
       </View>
     );
   }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Lịch sử cảm biến</Text>
-      <Text style={styles.subtitle}>{POINT_LIMIT} mốc dữ liệu gần nhất (hh:mm:ss)</Text>
+      {/* Header */}
+      <View style={styles.headerSection}>
+        <View>
+          <Text style={styles.title}>Lịch sử đo đạc</Text>
+          <Text style={styles.subtitle}>{latestPoints.length} mốc dữ liệu theo thời gian (hh:mm)</Text>
+        </View>
+        <TouchableOpacity
+          style={[styles.refreshBtn, SHADOWS.sm]}
+          onPress={() => { setLoading(true); fetchHistory(); }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="refresh" size={20} color={COLORS.primary} />
+        </TouchableOpacity>
+      </View>
 
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {/* Filter */}
+      <View style={styles.filterRow}>
+        {FILTERS.map((f) => (
+          <TouchableOpacity
+            key={f.value}
+            style={[styles.filterChip, activeFilter === f.value && styles.filterChipActive]}
+            onPress={() => setActiveFilter(f.value)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterText, activeFilter === f.value && styles.filterTextActive]}>
+              {f.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
+      {error ? (
+        <View style={[styles.errorBanner, SHADOWS.sm]}>
+          <Ionicons name="cloud-offline-outline" size={16} color={COLORS.danger} />
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
+
+      {/* Charts */}
       <MetricChart
-        title="EC"
+        title="Độ dẫn điện (EC)"
         labels={labels}
         values={ecValues}
         color="#2E7D32"
         unit="mS/cm"
+        icon="flash-outline"
         decimalPlaces={2}
       />
       <MetricChart
-        title="Độ ẩm"
+        title="Độ ẩm đất"
         labels={labels}
         values={moistureValues}
         color="#0288D1"
         unit="%"
+        icon="water-outline"
         decimalPlaces={1}
       />
       <MetricChart
-        title="Nhiệt độ"
+        title="Nhiệt độ đất"
         labels={labels}
         values={temperatureValues}
         color="#EF6C00"
         unit="°C"
+        icon="thermometer-outline"
         decimalPlaces={1}
       />
       <MetricChart
@@ -147,6 +207,7 @@ export default function HistoryScreen() {
         values={nEstimateValues}
         color="#558B2F"
         unit="mg/kg"
+        icon="leaf-outline"
         decimalPlaces={1}
       />
     </ScrollView>
@@ -160,58 +221,141 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    gap: 10,
+    gap: 12,
+    paddingBottom: 32,
   },
   loadingContainer: {
     flex: 1,
     backgroundColor: COLORS.bg,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 10,
   },
   loadingText: {
-    color: COLORS.text,
+    color: COLORS.textSecondary,
     fontSize: 15,
   },
+  headerSection: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: COLORS.primary,
+    fontSize: 26,
+    fontWeight: '800',
+    color: COLORS.primaryDark,
+    letterSpacing: -0.3,
   },
   subtitle: {
-    color: COLORS.text,
-    marginBottom: 8,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+    fontSize: 13,
   },
-  chartCard: {
+  refreshBtn: {
     backgroundColor: COLORS.white,
-    borderRadius: 16,
-    paddingVertical: 12,
+    padding: 10,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+
+  // Filter
+  filterRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  filterChipActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  filterTextActive: {
+    color: COLORS.white,
+  },
+
+  // Error
+  errorBanner: {
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  chartTitle: {
-    alignSelf: 'flex-start',
-    marginLeft: 14,
-    marginBottom: 8,
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.primary,
-  },
-  chart: {
-    borderRadius: 16,
-  },
-  emptyText: {
-    color: COLORS.text,
-    padding: 20,
-  },
-  unitText: {
-    alignSelf: 'flex-start',
-    marginTop: 8,
-    marginLeft: 14,
-    color: '#355e3b',
-    fontSize: 12,
+    gap: 8,
+    backgroundColor: '#FFF5F5',
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: '#FFCDD2',
+    padding: 10,
   },
   errorText: {
     color: COLORS.danger,
-    fontWeight: '600',
+    fontSize: 13,
+    flex: 1,
+    fontWeight: '500',
+  },
+
+  // Chart Card
+  chartCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    padding: 16,
+  },
+  chartHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  chartIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chartTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.primaryDark,
+  },
+  chartUnit: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 1,
+  },
+  chartStat: {
+    marginLeft: 'auto',
+    alignItems: 'flex-end',
+  },
+  chartStatValue: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  chartStatLabel: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+  },
+  chart: {
+    borderRadius: RADIUS.md,
+    marginLeft: -8,
+  },
+  emptyChart: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    gap: 8,
+  },
+  emptyText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
   },
 });

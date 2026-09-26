@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
@@ -12,48 +12,90 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { askChatbot } from '../services/api';
+import { COLORS, SHADOWS, RADIUS } from '../constants/theme';
 
-const COLORS = {
-  bg: '#F1F8E9',
-  primary: '#2E7D32',
-  text: '#1B4332',
-  white: '#ffffff',
-  userBubble: '#A5D6A7',
-  botBubble: '#E8F5E9',
-  danger: '#C62828',
-};
+const QUICK_PROMPTS = [
+  'Độ ẩm hiện tại có tốt cho cây không?',
+  'Hướng dẫn xử lý khi chỉ số EC tăng cao',
+  'Liều lượng tưới và bón phân đợt này',
+  'Nhiệt độ môi trường ảnh hưởng cây thế nào?',
+];
 
 function simplifyAnswerText(rawText) {
   if (!rawText || typeof rawText !== 'string') {
-    return 'Không có phản hồi từ chatbot.';
+    return 'Không có phản hồi từ trợ lý AI.';
   }
-
-  // Làm gọn markdown/latex cơ bản để người dùng dễ đọc trên điện thoại.
   let text = rawText
     .replace(/\$\$(.*?)\$\$/gs, '$1')
     .replace(/\$(.*?)\$/gs, '$1')
     .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '$1/$2')
     .replace(/\\times/g, ' x ')
     .replace(/\\cdot/g, ' * ')
-    .replace(/\\degree/g, ' độ')
+    .replace(/\\degree/g, '°')
     .replace(/\\[a-zA-Z]+/g, '')
-    .replace(/[*_`#>-]/g, ' ')
-    .replace(/\s{2,}/g, ' ')
     .trim();
-
-  // Giới hạn độ dài để bubble chat gọn, dễ đọc nhanh.
-  if (text.length > 420) {
-    text = `${text.slice(0, 420).trim()}...`;
+  if (text.length > 500) {
+    text = `${text.slice(0, 500).trim()}...`;
   }
+  return text || 'Không có phản hồi từ trợ lý AI.';
+}
 
-  return text || 'Không có phản hồi từ chatbot.';
+function TypingIndicator() {
+  const dots = [useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current];
+
+  useEffect(() => {
+    const animations = dots.map((dot, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 200),
+          Animated.timing(dot, { toValue: -6, duration: 300, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0, duration: 300, useNativeDriver: true }),
+        ]),
+      ),
+    );
+    animations.forEach((a) => a.start());
+    return () => animations.forEach((a) => a.stop());
+  }, []);
+
+  return (
+    <View style={styles.typingContainer}>
+      <View style={styles.typingAvatar}>
+        <Ionicons name="leaf" size={14} color={COLORS.white} />
+      </View>
+      <View style={styles.typingBubble}>
+        {dots.map((dot, i) => (
+          <Animated.View key={i} style={[styles.typingDot, { transform: [{ translateY: dot }] }]} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function MessageBubble({ item }) {
+  const isUser = item.role === 'user';
+  return (
+    <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
+      {!isUser ? (
+        <View style={styles.botAvatar}>
+          <Ionicons name="leaf" size={16} color={COLORS.white} />
+        </View>
+      ) : null}
+      <View style={[styles.bubble, isUser ? styles.userBubble : styles.botBubble, SHADOWS.sm]}>
+        <Text style={[styles.bubbleText, isUser && styles.userBubbleText]}>{item.text}</Text>
+      </View>
+      {isUser ? (
+        <View style={styles.userAvatar}>
+          <Ionicons name="person" size={16} color={COLORS.white} />
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 export default function ChatbotScreen() {
-  const tabBarHeight = useBottomTabBarHeight();
   const insets = useSafeAreaInsets();
 
   const [messages, setMessages] = useState([]);
@@ -62,10 +104,10 @@ export default function ChatbotScreen() {
   const [error, setError] = useState('');
 
   const handleClearChat = () => {
-    Alert.alert('Xóa đoạn chat', 'Bạn có chắc muốn xóa toàn bộ hội thoại?', [
+    Alert.alert('Xóa đoạn chat', 'Bạn có chắc chắn muốn xóa toàn bộ cuộc trò chuyện?', [
       { text: 'Hủy', style: 'cancel' },
       {
-        text: 'Xóa',
+        text: 'Xóa tất cả',
         style: 'destructive',
         onPress: () => {
           setMessages([]);
@@ -77,23 +119,10 @@ export default function ChatbotScreen() {
     ]);
   };
 
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-
-    
-
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
-
-  const handleSend = async () => {
-    const trimmed = question.trim();
+  const handleSend = async (text) => {
+    const trimmed = (text || question).trim();
     if (!trimmed || loading) return;
 
-    // Lưu lịch sử hỏi đáp trong session của màn hình Chatbot.
     const userMessage = {
       id: `${Date.now()}-user`,
       role: 'user',
@@ -116,35 +145,71 @@ export default function ChatbotScreen() {
     } catch (err) {
       const message = err.code === 'ECONNABORTED'
         ? 'Server phản hồi quá chậm (quá 10 giây).'
-        : 'Không gửi được câu hỏi đến server.';
+        : 'Không thể gửi câu hỏi đến máy chủ.';
       setError(message);
     } finally {
       setLoading(false);
     }
   };
 
+  const showPrompts = messages.length === 0 && !loading;
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior="padding"
-      keyboardVerticalOffset={Platform.OS === 'ios' ? tabBarHeight : 0}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
       <View style={[styles.content, { paddingBottom: Math.max(10, insets.bottom) }]}>
+        {/* Header */}
         <View style={styles.headerRow}>
-          <Text style={styles.title}>Chatbot chăm sóc cây</Text>
+          <View>
+            <Text style={styles.title}>Trợ lý Nông nghiệp AI</Text>
+            <Text style={styles.headerSubtitle}>Tư vấn canh tác và giải đáp thắc mắc cây trồng</Text>
+          </View>
           {messages.length > 0 ? (
             <TouchableOpacity
               style={[styles.clearBtn, loading ? styles.clearBtnDisabled : null]}
               onPress={handleClearChat}
               disabled={loading}
+              activeOpacity={0.7}
             >
-              <Text style={styles.clearBtnText}>Xóa chat</Text>
+              <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
             </TouchableOpacity>
           ) : null}
         </View>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? (
+          <View style={[styles.errorBanner, SHADOWS.sm]}>
+            <Ionicons name="alert-circle-outline" size={16} color={COLORS.danger} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
 
+        {/* Quick Prompts */}
+        {showPrompts ? (
+          <View style={styles.promptsSection}>
+            <View style={styles.emptyStateIcon}>
+              <Ionicons name="chatbubbles-outline" size={48} color={COLORS.accent} />
+            </View>
+            <Text style={styles.emptyText}>Bắt đầu bằng một câu hỏi về chỉ số đất hoặc kỹ thuật chăm sóc cây.</Text>
+            <View style={styles.promptsGrid}>
+              {QUICK_PROMPTS.map((prompt, i) => (
+                <TouchableOpacity
+                  key={i}
+                  style={[styles.promptChip, SHADOWS.sm]}
+                  onPress={() => handleSend(prompt)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="chatbubble-ellipses-outline" size={16} color={COLORS.primary} />
+                  <Text style={styles.promptText}>{prompt}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Messages */}
         <FlatList
           data={messages}
           keyExtractor={(item) => item.id}
@@ -152,45 +217,29 @@ export default function ChatbotScreen() {
           keyboardShouldPersistTaps="handled"
           style={styles.list}
           contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => (
-            <View
-              style={[
-                styles.bubble,
-                item.role === 'user' ? styles.userBubble : styles.botBubble,
-              ]}
-            >
-              <Text style={styles.bubbleText}>{item.text}</Text>
-            </View>
-          )}
-          ListEmptyComponent={
-            <Text style={styles.emptyText}>Hãy bắt đầu bằng một câu hỏi về chỉ số đất.</Text>
-          }
+          renderItem={({ item }) => <MessageBubble item={item} />}
         />
 
-        {loading ? (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color={COLORS.primary} />
-            <Text style={styles.loadingText}>Đang chờ LLM trả lời...</Text>
-          </View>
-        ) : null}
+        {/* Typing Indicator */}
+        {loading ? <TypingIndicator /> : null}
 
-        <View
-          style={styles.inputRow}
-        >
+        {/* Input Row */}
+        <View style={[styles.inputRow, SHADOWS.md]}>
           <TextInput
             style={styles.input}
             value={question}
             onChangeText={setQuestion}
-            placeholder="Nhập câu hỏi..."
-            placeholderTextColor="#6b7280"
+            placeholder="Nhập câu hỏi cần tư vấn..."
+            placeholderTextColor={COLORS.textMuted}
             multiline
           />
           <TouchableOpacity
-            style={[styles.sendBtn, loading ? styles.sendBtnDisabled : null]}
-            onPress={handleSend}
-            disabled={loading}
+            style={[styles.sendBtn, (!question.trim() || loading) && styles.sendBtnDisabled]}
+            onPress={() => handleSend()}
+            disabled={!question.trim() || loading}
+            activeOpacity={0.7}
           >
-            <Text style={styles.sendBtnText}>Gửi</Text>
+            <Ionicons name="send" size={20} color={COLORS.white} />
           </TouchableOpacity>
         </View>
       </View>
@@ -208,102 +257,217 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 10,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: COLORS.primary,
-  },
   headerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
   },
+  title: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: COLORS.primaryDark,
+    letterSpacing: -0.3,
+  },
+  headerSubtitle: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
   clearBtn: {
-    backgroundColor: '#E8F5E9',
+    backgroundColor: '#FFF5F5',
     borderWidth: 1,
-    borderColor: '#81C784',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    borderColor: '#FFCDD2',
+    padding: 8,
+    borderRadius: RADIUS.sm,
   },
   clearBtnDisabled: {
-    opacity: 0.6,
+    opacity: 0.4,
   },
-  clearBtnText: {
-    color: '#2E7D32',
-    fontWeight: '700',
-    fontSize: 12,
+
+  // Error
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFF5F5',
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    borderColor: '#FFCDD2',
+    padding: 10,
+  },
+  errorText: {
+    color: COLORS.danger,
+    fontSize: 13,
+    flex: 1,
+    fontWeight: '500',
+  },
+
+  // Quick Prompts
+  promptsSection: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    paddingHorizontal: 8,
+  },
+  emptyStateIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: COLORS.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  promptsGrid: {
+    width: '100%',
+    gap: 8,
+  },
+  promptChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.md,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  promptText: {
+    color: COLORS.primaryDark,
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+
+  // Messages
+  list: {
+    flex: 1,
   },
   listContent: {
     flexGrow: 1,
     justifyContent: 'flex-end',
-    gap: 8,
+    gap: 12,
+    paddingVertical: 8,
   },
-  list: {
-    flex: 1,
+  messageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    maxWidth: '88%',
+  },
+  messageRowUser: {
+    alignSelf: 'flex-end',
+    flexDirection: 'row',
+  },
+  botAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  userAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.primaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   bubble: {
-    maxWidth: '85%',
-    borderRadius: 14,
+    maxWidth: '82%',
+    borderRadius: RADIUS.md,
     paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
   },
   userBubble: {
-    alignSelf: 'flex-end',
-    backgroundColor: COLORS.userBubble,
+    backgroundColor: COLORS.primary,
+    borderBottomRightRadius: 4,
   },
   botBubble: {
-    alignSelf: 'flex-start',
-    backgroundColor: COLORS.botBubble,
+    backgroundColor: COLORS.white,
+    borderBottomLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   bubbleText: {
-    color: COLORS.text,
+    color: COLORS.primaryDark,
     lineHeight: 20,
+    fontSize: 14,
   },
-  emptyText: {
-    textAlign: 'center',
-    color: '#4b5563',
-    marginTop: 20,
+  userBubbleText: {
+    color: COLORS.white,
   },
+
+  // Typing
+  typingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  typingAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  typingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  typingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.accent,
+  },
+
+  // Input
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
     backgroundColor: COLORS.white,
-    borderRadius: 14,
-    padding: 8,
-    marginBottom: 32,
+    borderRadius: RADIUS.lg,
+    padding: 6,
+    paddingLeft: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   input: {
     flex: 1,
     maxHeight: 100,
-    color: COLORS.text,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    color: COLORS.primaryDark,
+    paddingVertical: 8,
+    fontSize: 15,
   },
   sendBtn: {
     backgroundColor: COLORS.primary,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sendBtnDisabled: {
-    opacity: 0.6,
-  },
-  sendBtnText: {
-    color: '#ffffff',
-    fontWeight: '700',
-  },
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  loadingText: {
-    color: COLORS.text,
-  },
-  errorText: {
-    color: COLORS.danger,
-    fontWeight: '600',
+    backgroundColor: COLORS.accent,
+    opacity: 0.5,
   },
 });

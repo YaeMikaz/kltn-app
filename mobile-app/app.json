@@ -38,7 +38,8 @@
           "photosPermission": "Cho phép ứng dụng chọn ảnh cây từ thư viện."
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-status-bar"
     ]
   }
 }

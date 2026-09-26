@@ -1,27 +1,57 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-
-const GREEN = '#2E7D32';
-const GREEN_SOFT = '#A5D6A7';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Platform } from 'react-native';
+import { COLORS } from '../constants/theme';
 
 export default function RootLayout() {
+  const insets = useSafeAreaInsets();
+  const bottomInset = insets.bottom > 0 ? insets.bottom : (Platform.OS === 'android' ? 12 : 8);
+
   return (
     <Tabs
       screenOptions={{
-        headerStyle: { backgroundColor: GREEN },
-        headerTintColor: '#fff',
-        tabBarActiveTintColor: GREEN,
-        tabBarInactiveTintColor: '#6b7280',
+        headerStyle: {
+          backgroundColor: COLORS.primary,
+          elevation: 0,
+          shadowOpacity: 0,
+        },
+        headerTintColor: COLORS.white,
+        headerTitleStyle: {
+          fontWeight: '700',
+          fontSize: 18,
+        },
+        tabBarActiveTintColor: COLORS.primary,
+        tabBarInactiveTintColor: COLORS.textMuted,
         tabBarHideOnKeyboard: true,
-        tabBarStyle: { borderTopColor: GREEN_SOFT },
+        tabBarStyle: {
+          backgroundColor: COLORS.white,
+          borderTopWidth: 0,
+          elevation: 12,
+          shadowColor: COLORS.shadow,
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
+          height: 60 + bottomInset,
+          paddingBottom: bottomInset + 4,
+          paddingTop: 6,
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '600',
+        },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="leaf-outline" size={size} color={color} />
+          title: 'Tổng quan',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'leaf' : 'leaf-outline'}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
@@ -29,8 +59,12 @@ export default function RootLayout() {
         name="history"
         options={{
           title: 'Lịch sử',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="analytics-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'analytics' : 'analytics-outline'}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
@@ -38,8 +72,12 @@ export default function RootLayout() {
         name="chatbot"
         options={{
           title: 'Chatbot',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="chatbubble-ellipses-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'chatbubble-ellipses' : 'chatbubble-ellipses-outline'}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
@@ -47,8 +85,12 @@ export default function RootLayout() {
         name="diagnosis"
         options={{
           title: 'Chẩn đoán',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="camera-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'scan' : 'scan-outline'}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />

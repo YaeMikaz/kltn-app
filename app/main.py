@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db, engine
 from app.models import SensorReading, Base
 from app.schemas import ClassifyResponse, ChatRequest, ChatResponse, SensorIn, SensorOut
-from typing import List
+from typing import List, Optional
 
 Base.metadata.create_all(bind=engine)
 
@@ -48,7 +48,7 @@ def create_reading(data: SensorIn, db: Session = Depends(get_db)):
     db.refresh(record)
     return record
 
-@app.get("/sensor-data/latest", response_model=SensorOut)
+@app.get("/sensor-data/latest", response_model=Optional[SensorOut])
 def get_latest(db: Session = Depends(get_db)):
     return db.query(SensorReading).order_by(SensorReading.timestamp.desc()).first()
 

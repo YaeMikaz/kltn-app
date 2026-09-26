@@ -9,6 +9,7 @@ export const api = axios.create({
     'Content-Type': 'application/json',
     'Cache-Control': 'no-cache',
     Pragma: 'no-cache',
+    'Bypass-Tunnel-Reminder': 'true',
   },
 });
 
