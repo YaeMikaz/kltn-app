@@ -17,7 +17,17 @@ function getErrorMessage(error) {
   if (error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT') {
     return 'Server không phản hồi sau 30 giây. Vui lòng thử lại.';
   }
-  return error?.response?.data?.detail || 'Không thể phân tích ảnh. Vui lòng kiểm tra kết nối và thử lại.';
+  const detail = error?.response?.data?.detail;
+  if (typeof detail === 'string') {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    return detail.map((d) => d.msg || JSON.stringify(d)).join(', ');
+  }
+  if (detail && typeof detail === 'object') {
+    return detail.msg || JSON.stringify(detail);
+  }
+  return error?.message || 'Không thể phân tích ảnh. Vui lòng kiểm tra kết nối và thử lại.';
 }
 
 function getSeverityConfig(severity) {
@@ -97,15 +107,17 @@ export default function DiagnosisScreen() {
 
   const hasDisease = Boolean(
     result?.disease &&
+    result.disease.toLowerCase() !== 'cây khỏe mạnh' &&
     result.disease.toLowerCase() !== 'khỏe mạnh' &&
     result.disease.toLowerCase() !== 'không phát hiện' &&
     result.disease.toLowerCase() !== 'healthy'
   );
   const severityConfig = result ? getSeverityConfig(result.severity) : null;
 
-  const top3 = result ? [
-    { name: result.disease || 'Không phát hiện bệnh', confidence: result.confidence || 0 },
-  ] : [];
+  // Sử dụng top3 từ backend API nếu có, fallback về mảng chứa Top 1
+  const top3 = result?.top3 && result.top3.length > 0
+    ? result.top3
+    : (result ? [{ name: result.disease || 'Cây khỏe mạnh', confidence: result.confidence || 0 }] : []);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>

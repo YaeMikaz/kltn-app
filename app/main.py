@@ -1,44 +1,63 @@
 # app/main.py
 import os
 from statistics import fmean
+from typing import List, Optional
 
 from fastapi import FastAPI, Depends, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+
 from app.database import get_db, engine
 from app.models import SensorReading, Base
-from app.schemas import ClassifyResponse, ChatRequest, ChatResponse, SensorIn, SensorOut
-from typing import List, Optional
+from app.schemas import (
+    ClassifyResponse,
+    ChatRequest,
+    ChatResponse,
+    SensorIn,
+    SensorOut,
+)
+from app.services.classifier import predict_disease
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="KLTN API")
+app = FastAPI(title="KLTN AI & IoT API")
+
+# Cấu hình CORS để trình duyệt web và thiết bị di động có thể gọi API mà không bị chặn OPTIONS request
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.post("/image/classify", response_model=ClassifyResponse)
 async def classify_image(file: UploadFile = File(...)):
+    """
+    Nhận diện bệnh hại trên lá cây bằng mô hình EfficientNet-B0 CNN.
+    """
     try:
-        if file.content_type not in {"image/jpeg", "image/png"}:
+        if file.content_type not in {"image/jpeg", "image/png", "image/jpg", "application/octet-stream"}:
             raise HTTPException(
                 status_code=400,
-                detail="Chỉ chấp nhận file ảnh JPEG hoặc PNG",
+                detail="Chỉ chấp nhận file ảnh định dạng JPEG hoặc PNG",
             )
 
-        await file.read()
+        image_bytes = await file.read()
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="File ảnh rỗng")
 
-        return ClassifyResponse(
-            plant="Cà chua",
-            disease="Đốm lá sớm",
-            confidence=0.87,
-            severity="Trung bình",
-            recommendation="Phun thuốc gốc đồng, giảm tưới nước, kiểm tra lại sau 3 ngày",
-        )
+        result = predict_disease(image_bytes)
+        return ClassifyResponse(**result)
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(
             status_code=500,
-            detail=f"Lỗi không xác định khi phân loại ảnh: {error}",
+            detail=f"Lỗi khi xử lý nhận diện ảnh: {error}",
         ) from error
+
 
 @app.post("/sensor-data", response_model=SensorOut)
 def create_reading(data: SensorIn, db: Session = Depends(get_db)):
@@ -48,9 +67,11 @@ def create_reading(data: SensorIn, db: Session = Depends(get_db)):
     db.refresh(record)
     return record
 
+
 @app.get("/sensor-data/latest", response_model=Optional[SensorOut])
 def get_latest(db: Session = Depends(get_db)):
     return db.query(SensorReading).order_by(SensorReading.timestamp.desc()).first()
+
 
 @app.get("/sensor-data/history", response_model=List[SensorOut])
 def get_history(db: Session = Depends(get_db)):

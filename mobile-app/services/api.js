@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import axios from 'axios';
 import { BASE_URL } from '../constants/config';
 
@@ -15,7 +16,6 @@ export const api = axios.create({
 
 export const getLatestSensorData = async () => {
   const response = await api.get('/sensor-data/latest', {
-    // Them timestamp de tranh mot so proxy/client tra ve ban cache cu.
     params: { _ts: Date.now() },
   });
   return response.data;
@@ -35,11 +35,21 @@ export const askChatbot = async (question) => {
 
 export const classifyImage = async (image) => {
   const formData = new FormData();
-  formData.append('file', {
-    uri: image.uri,
-    name: image.fileName || `plant-${Date.now()}.jpg`,
-    type: image.mimeType || 'image/jpeg',
-  });
+
+  if (Platform.OS === 'web') {
+    // Trên Web: image.uri có thể là blob: hoặc data: URI -> cần fetch sang Blob thật sự
+    const response = await fetch(image.uri);
+    const blob = await response.blob();
+    const filename = image.fileName || `plant-${Date.now()}.jpg`;
+    formData.append('file', blob, filename);
+  } else {
+    // Trên Native (Android/iOS): dùng object uri của React Native
+    formData.append('file', {
+      uri: image.uri,
+      name: image.fileName || `plant-${Date.now()}.jpg`,
+      type: image.mimeType || 'image/jpeg',
+    });
+  }
 
   const response = await api.post('/image/classify', formData, {
     timeout: 30000,

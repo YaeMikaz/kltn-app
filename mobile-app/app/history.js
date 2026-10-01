@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LineChart } from 'react-native-chart-kit';
 import { getSensorHistory } from '../services/api';
 import { COLORS, SHADOWS, RADIUS } from '../constants/theme';
 
-const chartWidth = Dimensions.get('window').width - 64;
+// react-native-chart-kit không hoạt động ổn trên Web, chỉ import trên Native
+let LineChart = null;
+if (Platform.OS !== 'web') {
+  LineChart = require('react-native-chart-kit').LineChart;
+}
+
+const { width: screenWidth } = Dimensions.get('window');
+const chartWidth = Math.max(300, Math.min(screenWidth - 64, 600));
 const SHOW_LABEL_EVERY = 2;
 
 const FILTERS = [
@@ -16,6 +22,8 @@ const FILTERS = [
 ];
 
 function MetricChart({ title, labels, values, color, unit, icon, decimalPlaces = 2 }) {
+  const hasValidData = Array.isArray(values) && values.length > 0 && Array.isArray(labels) && labels.length === values.length;
+
   return (
     <View style={[styles.chartCard, SHADOWS.md]}>
       <View style={styles.chartHeader}>
@@ -26,7 +34,7 @@ function MetricChart({ title, labels, values, color, unit, icon, decimalPlaces =
           <Text style={styles.chartTitle}>{title}</Text>
           <Text style={styles.chartUnit}>Đơn vị: {unit}</Text>
         </View>
-        {values.length > 0 ? (
+        {hasValidData ? (
           <View style={styles.chartStat}>
             <Text style={[styles.chartStatValue, { color }]}>
               {values[values.length - 1]?.toFixed(decimalPlaces)}
@@ -35,7 +43,7 @@ function MetricChart({ title, labels, values, color, unit, icon, decimalPlaces =
           </View>
         ) : null}
       </View>
-      {values.length > 0 ? (
+      {hasValidData ? (
         <LineChart
           data={{
             labels,
