@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -6,22 +6,25 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { askChatbot } from '../services/api';
-import { COLORS, SHADOWS, RADIUS } from '../constants/theme';
+import { useTheme } from '../context/ThemeContext';
+import { Icon } from '../components/Icon';
 
 const QUICK_PROMPTS = [
   'Độ ẩm hiện tại có tốt cho cây không?',
   'Hướng dẫn xử lý khi chỉ số EC tăng cao',
   'Liều lượng tưới và bón phân đợt này',
   'Nhiệt độ môi trường ảnh hưởng cây thế nào?',
+  'Cách phòng ngừa sâu bệnh trong 24 giờ tới',
 ];
 
 function simplifyAnswerText(rawText) {
@@ -37,79 +40,105 @@ function simplifyAnswerText(rawText) {
     .replace(/\\degree/g, '°')
     .replace(/\\[a-zA-Z]+/g, '')
     .trim();
-  if (text.length > 500) {
-    text = `${text.slice(0, 500).trim()}...`;
+  if (text.length > 600) {
+    text = `${text.slice(0, 600).trim()}...`;
   }
   return text || 'Không có phản hồi từ trợ lý AI.';
 }
 
-function TypingIndicator() {
-  const dots = [useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current, useRef(new Animated.Value(0)).current];
+function TypingIndicator({ colors }) {
+  const dots = useMemo(() => [
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ], []);
 
   useEffect(() => {
     const animations = dots.map((dot, i) =>
       Animated.loop(
         Animated.sequence([
-          Animated.delay(i * 200),
-          Animated.timing(dot, { toValue: -6, duration: 300, useNativeDriver: true }),
-          Animated.timing(dot, { toValue: 0, duration: 300, useNativeDriver: true }),
+          Animated.delay(i * 180),
+          Animated.timing(dot, { toValue: -6, duration: 280, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0, duration: 280, useNativeDriver: true }),
         ]),
       ),
     );
     animations.forEach((a) => a.start());
     return () => animations.forEach((a) => a.stop());
-  }, []);
+  }, [dots]);
 
   return (
     <View style={styles.typingContainer}>
-      <View style={styles.typingAvatar}>
-        <Ionicons name="leaf" size={14} color={COLORS.white} />
+      <View style={[styles.avatarBox, { backgroundColor: colors.accentSoft }]}>
+        <Icon name="bot" size={16} color={colors.accent} />
       </View>
-      <View style={styles.typingBubble}>
+      <View style={[styles.typingBubble, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         {dots.map((dot, i) => (
-          <Animated.View key={i} style={[styles.typingDot, { transform: [{ translateY: dot }] }]} />
+          <Animated.View
+            key={i}
+            style={[styles.typingDot, { backgroundColor: colors.accent, transform: [{ translateY: dot }] }]}
+          />
         ))}
       </View>
     </View>
   );
 }
 
-function MessageBubble({ item }) {
+function MessageBubble({ item, colors, tokens }) {
   const isUser = item.role === 'user';
   return (
-    <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
-      {!isUser ? (
-        <View style={styles.botAvatar}>
-          <Ionicons name="leaf" size={16} color={COLORS.white} />
+    <View style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowBot]}>
+      {!isUser && (
+        <View style={[styles.avatarBox, { backgroundColor: colors.primarySoft }]}>
+          <Icon name="bot" size={16} color={colors.primary} />
         </View>
-      ) : null}
-      <View style={[styles.bubble, isUser ? styles.userBubble : styles.botBubble, SHADOWS.sm]}>
-        <Text style={[styles.bubbleText, isUser && styles.userBubbleText]}>{item.text}</Text>
+      )}
+
+      <View
+        style={[
+          styles.bubble,
+          isUser
+            ? [styles.userBubble, { backgroundColor: colors.primary }]
+            : [styles.botBubble, { backgroundColor: colors.surface, borderColor: colors.border }],
+          tokens.shadows.sm,
+        ]}
+      >
+        <Text
+          style={[
+            styles.bubbleText,
+            { color: isUser ? '#FFFFFF' : colors.text },
+          ]}
+        >
+          {item.text}
+        </Text>
       </View>
-      {isUser ? (
-        <View style={styles.userAvatar}>
-          <Ionicons name="person" size={16} color={COLORS.white} />
-        </View>
-      ) : null}
     </View>
   );
 }
 
 export default function ChatbotScreen() {
   const insets = useSafeAreaInsets();
+  const { colors, tokens } = useTheme();
+  const idRef = useRef(0);
 
   const [messages, setMessages] = useState([]);
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const nextId = () => {
+    idRef.current += 1;
+    return `msg-${idRef.current}`;
+  };
+
   const handleClearChat = () => {
-    Alert.alert('Xóa đoạn chat', 'Bạn có chắc chắn muốn xóa toàn bộ cuộc trò chuyện?', [
+    Alert.alert('Xóa đoạn chat', 'Bạn có chắc chắn muốn xóa toàn bộ lịch sử tư vấn hiện tại?', [
       { text: 'Hủy', style: 'cancel' },
       {
         text: 'Xóa tất cả',
         style: 'destructive',
         onPress: () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
           setMessages([]);
           setQuestion('');
           setError('');
@@ -123,30 +152,26 @@ export default function ChatbotScreen() {
     const trimmed = (text || question).trim();
     if (!trimmed || loading) return;
 
-    const userMessage = {
-      id: `${Date.now()}-user`,
-      role: 'user',
-      text: trimmed,
-    };
-
-    setMessages((prev) => [userMessage, ...prev]);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setMessages((prev) => [{ id: nextId(), role: 'user', text: trimmed }, ...prev]);
     setQuestion('');
     setError('');
     setLoading(true);
 
     try {
       const data = await askChatbot(trimmed);
-      const botMessage = {
-        id: `${Date.now()}-bot`,
-        role: 'bot',
-        text: simplifyAnswerText(data?.answer),
-      };
-      setMessages((prev) => [botMessage, ...prev]);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setMessages((prev) => [
+        { id: nextId(), role: 'bot', text: simplifyAnswerText(data?.answer) },
+        ...prev,
+      ]);
     } catch (err) {
-      const message = err.code === 'ECONNABORTED'
-        ? 'Server phản hồi quá chậm (quá 10 giây).'
-        : 'Không thể gửi câu hỏi đến máy chủ.';
-      setError(message);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setError(
+        err.code === 'ECONNABORTED'
+          ? 'Máy chủ AI quá hạn phản hồi (10s). Thử câu hỏi ngắn hơn.'
+          : 'Không thể kết nối đến Trợ lý AI.',
+      );
     } finally {
       setLoading(false);
     }
@@ -156,90 +181,116 @@ export default function ChatbotScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: colors.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <View style={[styles.content, { paddingBottom: Math.max(10, insets.bottom) }]}>
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.title}>Trợ lý Nông nghiệp AI</Text>
-            <Text style={styles.headerSubtitle}>Tư vấn canh tác và giải đáp thắc mắc cây trồng</Text>
-          </View>
-          {messages.length > 0 ? (
-            <TouchableOpacity
-              style={[styles.clearBtn, loading ? styles.clearBtnDisabled : null]}
-              onPress={handleClearChat}
-              disabled={loading}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="trash-outline" size={16} color={COLORS.danger} />
-            </TouchableOpacity>
-          ) : null}
+      {/* Top Header */}
+      <View
+        style={[
+          styles.headerBar,
+          {
+            paddingTop: Math.max(16, insets.top + 8),
+            backgroundColor: colors.bg,
+            borderBottomColor: colors.hairline,
+          },
+        ]}
+      >
+        <View style={styles.headerLeft}>
+          <Text style={[styles.kicker, { color: colors.accent }]}>TRỢ LÝ CHUYÊN GIA NÔNG NGHIỆP</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Cố vấn Gemini AI</Text>
         </View>
 
+        {messages.length > 0 && (
+          <TouchableOpacity
+            style={[styles.clearBtn, { backgroundColor: colors.dangerSoft, borderColor: colors.danger }]}
+            onPress={handleClearChat}
+            disabled={loading}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Icon name="trash" size={16} color={colors.danger} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <View style={[styles.content, { paddingBottom: Math.max(12, insets.bottom + 6) }]}>
         {error ? (
-          <View style={[styles.errorBanner, SHADOWS.sm]}>
-            <Ionicons name="alert-circle-outline" size={16} color={COLORS.danger} />
-            <Text style={styles.errorText}>{error}</Text>
+          <View style={[styles.errorBanner, { backgroundColor: colors.dangerSoft, borderColor: colors.danger }]}>
+            <Icon name="alert" size={16} color={colors.danger} />
+            <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text>
           </View>
         ) : null}
 
-        {/* Quick Prompts */}
+        {/* Quick Prompts on Empty State */}
         {showPrompts ? (
-          <View style={styles.promptsSection}>
-            <View style={styles.emptyStateIcon}>
-              <Ionicons name="chatbubbles-outline" size={48} color={COLORS.accent} />
+          <ScrollView
+            style={styles.emptyContainer}
+            contentContainerStyle={styles.emptyContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={[styles.emptyBotBadge, { backgroundColor: colors.primarySoft }]}>
+              <Icon name="bot" size={32} color={colors.primary} />
             </View>
-            <Text style={styles.emptyText}>Bắt đầu bằng một câu hỏi về chỉ số đất hoặc kỹ thuật chăm sóc cây.</Text>
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>Hỏi chuyên gia về vườn</Text>
+            <Text style={[styles.emptySub, { color: colors.textSecondary }]}>
+              Dựa trên dữ liệu 10 bản ghi cảm biến mới nhất từ trạm quan trắc để đưa ra khuyến nghị thực tế.
+            </Text>
+
             <View style={styles.promptsGrid}>
-              {QUICK_PROMPTS.map((prompt, i) => (
+              <Text style={[styles.promptsLabel, { color: colors.textMuted }]}>GỢI Ý CÂU HỎI NHANH</Text>
+              {QUICK_PROMPTS.map((prompt) => (
                 <TouchableOpacity
-                  key={i}
-                  style={[styles.promptChip, SHADOWS.sm]}
+                  key={prompt}
+                  style={[
+                    styles.promptChip,
+                    { backgroundColor: colors.surface, borderColor: colors.border },
+                    tokens.shadows.sm,
+                  ]}
                   onPress={() => handleSend(prompt)}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="chatbubble-ellipses-outline" size={16} color={COLORS.primary} />
-                  <Text style={styles.promptText}>{prompt}</Text>
+                  <Text style={[styles.promptText, { color: colors.text }]}>{prompt}</Text>
+                  <Icon name="arrow-forward" size={16} color={colors.accent} />
                 </TouchableOpacity>
               ))}
             </View>
-          </View>
-        ) : null}
+          </ScrollView>
+        ) : (
+          <FlatList
+            data={messages}
+            keyExtractor={(item) => item.id}
+            inverted
+            keyboardShouldPersistTaps="handled"
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            renderItem={({ item }) => <MessageBubble item={item} colors={colors} tokens={tokens} />}
+          />
+        )}
 
-        {/* Messages */}
-        <FlatList
-          data={messages}
-          keyExtractor={(item) => item.id}
-          inverted
-          keyboardShouldPersistTaps="handled"
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => <MessageBubble item={item} />}
-        />
+        {loading ? <TypingIndicator colors={colors} /> : null}
 
-        {/* Typing Indicator */}
-        {loading ? <TypingIndicator /> : null}
-
-        {/* Input Row */}
-        <View style={[styles.inputRow, SHADOWS.md]}>
+        {/* Input Bar */}
+        <View style={[styles.inputRow, { backgroundColor: colors.surface, borderColor: colors.border }, tokens.shadows.md]}>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { color: colors.text }]}
             value={question}
             onChangeText={setQuestion}
-            placeholder="Nhập câu hỏi cần tư vấn..."
-            placeholderTextColor={COLORS.textMuted}
+            placeholder="Hỏi về bón phân, tưới nước, sâu bệnh..."
+            placeholderTextColor={colors.textMuted}
             multiline
           />
           <TouchableOpacity
-            style={[styles.sendBtn, (!question.trim() || loading) && styles.sendBtnDisabled]}
+            style={[
+              styles.sendBtn,
+              { backgroundColor: colors.primary },
+              (!question.trim() || loading) && { opacity: 0.35 },
+            ]}
             onPress={() => handleSend()}
             disabled={!question.trim() || loading}
             activeOpacity={0.7}
           >
-            <Ionicons name="send" size={20} color={COLORS.white} />
+            <Icon name="arrow-up" size={18} color="#FFFFFF" strokeWidth={2.4} />
           </TouchableOpacity>
         </View>
       </View>
@@ -250,103 +301,110 @@ export default function ChatbotScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.bg,
   },
-  content: {
-    flex: 1,
-    padding: 16,
-    gap: 10,
-  },
-  headerRow: {
+  headerBar: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+  },
+  headerLeft: {
+    flex: 1,
+  },
+  kicker: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
-    color: COLORS.primaryDark,
-    letterSpacing: -0.3,
-  },
-  headerSubtitle: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
+    letterSpacing: -0.4,
     marginTop: 2,
   },
   clearBtn: {
-    backgroundColor: '#FFF5F5',
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#FFCDD2',
-    padding: 8,
-    borderRadius: RADIUS.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  clearBtnDisabled: {
-    opacity: 0.4,
+  content: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    gap: 10,
   },
-
-  // Error
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FFF5F5',
-    borderRadius: RADIUS.sm,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#FFCDD2',
     padding: 10,
   },
   errorText: {
-    color: COLORS.danger,
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
+  emptyContainer: {
+    flex: 1,
+  },
+  emptyContent: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    gap: 8,
+  },
+  emptyBotBadge: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  emptyTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+  },
+  emptySub: {
     fontSize: 13,
-    flex: 1,
-    fontWeight: '500',
-  },
-
-  // Quick Prompts
-  promptsSection: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-    paddingHorizontal: 8,
-  },
-  emptyStateIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: COLORS.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyText: {
     textAlign: 'center',
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 19,
+    paddingHorizontal: 20,
+    marginBottom: 16,
   },
   promptsGrid: {
     width: '100%',
     gap: 8,
   },
+  promptsLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 2,
+    marginLeft: 4,
+  },
   promptChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
+    justifyContent: 'space-between',
+    gap: 12,
+    borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   promptText: {
-    color: COLORS.primaryDark,
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '600',
     flex: 1,
   },
-
-  // Messages
   list: {
     flex: 1,
   },
@@ -358,116 +416,81 @@ const styles = StyleSheet.create({
   },
   messageRow: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
     maxWidth: '88%',
+    gap: 8,
+    alignItems: 'flex-end',
   },
   messageRowUser: {
     alignSelf: 'flex-end',
-    flexDirection: 'row',
   },
-  botAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: COLORS.primary,
+  messageRowBot: {
+    alignSelf: 'flex-start',
+  },
+  avatarBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  userAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: COLORS.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
+    marginBottom: 4,
   },
   bubble: {
-    maxWidth: '82%',
-    borderRadius: RADIUS.md,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 18,
   },
   userBubble: {
-    backgroundColor: COLORS.primary,
     borderBottomRightRadius: 4,
   },
   botBubble: {
-    backgroundColor: COLORS.white,
     borderBottomLeftRadius: 4,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   bubbleText: {
-    color: COLORS.primaryDark,
-    lineHeight: 20,
     fontSize: 14,
+    lineHeight: 21,
+    fontWeight: '500',
   },
-  userBubbleText: {
-    color: COLORS.white,
-  },
-
-  // Typing
   typingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  typingAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingVertical: 4,
   },
   typingBubble: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: COLORS.border,
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
   typingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.accent,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
-
-  // Input
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 8,
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.lg,
+    borderRadius: 18,
     padding: 6,
-    paddingLeft: 14,
+    paddingLeft: 16,
     borderWidth: 1,
-    borderColor: COLORS.border,
   },
   input: {
     flex: 1,
     maxHeight: 100,
-    color: COLORS.primaryDark,
     paddingVertical: 8,
-    fontSize: 15,
+    fontSize: 14,
   },
   sendBtn: {
-    backgroundColor: COLORS.primary,
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  sendBtnDisabled: {
-    backgroundColor: COLORS.accent,
-    opacity: 0.5,
   },
 });

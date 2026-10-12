@@ -1,87 +1,120 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Dimensions, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import * as Haptics from 'expo-haptics';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getSensorHistory } from '../services/api';
-import { COLORS, SHADOWS, RADIUS } from '../constants/theme';
+import { useTheme } from '../context/ThemeContext';
+import { Icon } from '../components/Icon';
 
-// react-native-chart-kit không hoạt động ổn trên Web, chỉ import trên Native
 let LineChart = null;
 if (Platform.OS !== 'web') {
   LineChart = require('react-native-chart-kit').LineChart;
 }
 
 const { width: screenWidth } = Dimensions.get('window');
-const chartWidth = Math.max(300, Math.min(screenWidth - 64, 600));
-const SHOW_LABEL_EVERY = 2;
+const chartWidth = Math.max(300, Math.min(screenWidth - 40, 600));
 
 const FILTERS = [
-  { label: 'Gần nhất', value: 8 },
+  { label: '8 mốc', value: 8 },
   { label: '15 mốc', value: 15 },
   { label: '30 mốc', value: 30 },
-  { label: 'Tất cả', value: 50 },
+  { label: '50 mốc', value: 50 },
 ];
 
-function MetricChart({ title, labels, values, color, unit, icon, decimalPlaces = 2 }) {
+function MetricChart({
+  title,
+  labels,
+  values,
+  color,
+  unit,
+  icon,
+  decimalPlaces = 2,
+  selectedIndex,
+  onSelectPoint,
+  colors,
+  isDark,
+}) {
   const hasValidData = Array.isArray(values) && values.length > 0 && Array.isArray(labels) && labels.length === values.length;
+  const currentValue = selectedIndex != null && selectedIndex >= 0 && selectedIndex < values.length
+    ? values[selectedIndex]
+    : (values.length > 0 ? values[values.length - 1] : null);
 
   return (
-    <View style={[styles.chartCard, SHADOWS.md]}>
+    <View style={[styles.chartCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       <View style={styles.chartHeader}>
-        <View style={[styles.chartIconCircle, { backgroundColor: `${color}18` }]}>
-          <Ionicons name={icon} size={18} color={color} />
+        <View style={styles.chartHeaderLeft}>
+          <View style={[styles.chartIconBadge, { backgroundColor: `${color}18` }]}>
+            <Icon name={icon} size={15} color={color} />
+          </View>
+          <Text style={[styles.chartTitle, { color: colors.text }]}>{title}</Text>
         </View>
-        <View>
-          <Text style={styles.chartTitle}>{title}</Text>
-          <Text style={styles.chartUnit}>Đơn vị: {unit}</Text>
-        </View>
-        {hasValidData ? (
+
+        {hasValidData && currentValue != null ? (
           <View style={styles.chartStat}>
             <Text style={[styles.chartStatValue, { color }]}>
-              {values[values.length - 1]?.toFixed(decimalPlaces)}
+              {currentValue.toFixed(decimalPlaces)}
             </Text>
-            <Text style={styles.chartStatLabel}>hiện tại</Text>
+            <Text style={[styles.chartStatUnit, { color: colors.textSecondary }]}>{unit}</Text>
           </View>
         ) : null}
       </View>
+
       {hasValidData ? (
-        <LineChart
-          data={{
-            labels,
-            datasets: [{ data: values }],
-          }}
-          width={chartWidth}
-          height={180}
-          yAxisSuffix=""
-          chartConfig={{
-            backgroundColor: COLORS.white,
-            backgroundGradientFrom: COLORS.white,
-            backgroundGradientTo: COLORS.white,
-            decimalPlaces,
-            color: (opacity = 1) => `${color}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`,
-            labelColor: () => COLORS.textMuted,
-            propsForDots: {
-              r: '3',
-              strokeWidth: '2',
-              stroke: color,
-              fill: COLORS.white,
-            },
-            propsForBackgroundLines: {
-              strokeDasharray: '4 4',
-              stroke: '#E8EDE8',
-              strokeWidth: 1,
-            },
-            fillShadowGradientFrom: color,
-            fillShadowGradientTo: `${color}05`,
-            fillShadowGradientOpacity: 0.15,
-          }}
-          style={styles.chart}
-          bezier
-          withShadow={false}
-        />
+        <View style={styles.chartContainer}>
+          <LineChart
+            data={{
+              labels,
+              datasets: [{ data: values }],
+            }}
+            width={chartWidth}
+            height={175}
+            yAxisSuffix=""
+            onDataPointClick={({ index }) => {
+              Haptics.selectionAsync().catch(() => {});
+              if (onSelectPoint) onSelectPoint(index);
+            }}
+            chartConfig={{
+              backgroundColor: colors.surface,
+              backgroundGradientFrom: colors.surface,
+              backgroundGradientTo: colors.surface,
+              decimalPlaces,
+              color: (opacity = 1) => `${color}${Math.round(opacity * 255).toString(16).padStart(2, '0')}`,
+              labelColor: () => colors.textMuted,
+              propsForDots: {
+                r: '3.5',
+                strokeWidth: '1.5',
+                stroke: color,
+                fill: colors.surface,
+              },
+              propsForBackgroundLines: {
+                strokeDasharray: '3 3',
+                stroke: colors.hairline,
+                strokeWidth: 1,
+              },
+              fillShadowGradientFrom: color,
+              fillShadowGradientTo: `${color}00`,
+              fillShadowGradientOpacity: isDark ? 0.22 : 0.12,
+            }}
+            style={styles.chart}
+            bezier
+            withShadow={false}
+          />
+        </View>
       ) : (
         <View style={styles.emptyChart}>
-          <Ionicons name="bar-chart-outline" size={32} color={COLORS.accent} />
-          <Text style={styles.emptyText}>Chưa có dữ liệu cho {title}.</Text>
+          <Icon name="chart" size={28} color={colors.textMuted} />
+          <Text style={[styles.emptyText, { color: colors.textMuted }]}>
+            Chưa có dữ liệu cho {title}.
+          </Text>
         </View>
       )}
     </View>
@@ -89,27 +122,29 @@ function MetricChart({ title, labels, values, color, unit, icon, decimalPlaces =
 }
 
 export default function HistoryScreen() {
+  const insets = useSafeAreaInsets();
+  const { colors, isDark, tokens } = useTheme();
+
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeFilter, setActiveFilter] = useState(8);
+  const [activeFilter, setActiveFilter] = useState(15);
+  const [selectedPointIndex, setSelectedPointIndex] = useState(null);
 
   const fetchHistory = async () => {
     try {
       setError('');
       const rows = await getSensorHistory();
       setHistory(Array.isArray(rows) ? rows : []);
-    } catch (err) {
-      const message = err.code === 'ECONNABORTED'
-        ? 'Server phản hồi quá chậm (quá 10 giây).'
-        : 'Không thể lấy lịch sử dữ liệu cảm biến.';
-      setError(message);
+    } catch {
+      setError('Không thể lấy lịch sử dữ liệu cảm biến.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchHistory();
   }, []);
 
@@ -117,13 +152,25 @@ export default function HistoryScreen() {
     return [...history].slice(0, activeFilter).reverse();
   }, [history, activeFilter]);
 
+  // (a) Smart Label Sampling: compute interval so labels never overlap on mobile screen
   const labels = useMemo(() => {
+    const len = latestPoints.length;
+    if (len === 0) return [];
+
+    // Aim for 3 to 4 visible labels max across the screen width
+    const targetCount = chartWidth < 360 ? 3 : 4;
+    const step = Math.max(1, Math.ceil((len - 1) / (targetCount - 1)));
+
     return latestPoints.map((item, index) => {
-      const timeLabel = new Date(item.timestamp).toLocaleTimeString([], {
+      // Always show first and last, and every step
+      const isKeyPoint = index === 0 || index === len - 1 || index % step === 0;
+      if (!isKeyPoint) return '';
+
+      const d = new Date(item.timestamp);
+      return d.toLocaleTimeString('vi-VN', {
         hour: '2-digit',
         minute: '2-digit',
       });
-      return index % SHOW_LABEL_EVERY === 0 ? timeLabel : '';
     });
   }, [latestPoints]);
 
@@ -132,238 +179,404 @@ export default function HistoryScreen() {
   const temperatureValues = latestPoints.map((item) => Number(item.temperature) || 0);
   const nEstimateValues = latestPoints.map((item) => Number(item.n_estimate) || 0);
 
+  const selectedPoint = selectedPointIndex != null && selectedPointIndex >= 0 && selectedPointIndex < latestPoints.length
+    ? latestPoints[selectedPointIndex]
+    : (latestPoints.length > 0 ? latestPoints[latestPoints.length - 1] : null);
+
+  const selectedTimeStr = selectedPoint
+    ? new Date(selectedPoint.timestamp).toLocaleTimeString('vi-VN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    : '--:--';
+
+  const selectedDateStr = selectedPoint
+    ? new Date(selectedPoint.timestamp).toLocaleDateString('vi-VN', {
+        day: '2-digit',
+        month: '2-digit',
+      })
+    : '';
+
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Đang tải lịch sử đo...</Text>
+      <View style={[styles.loadingContainer, { backgroundColor: colors.bg }]}>
+        <ActivityIndicator size="small" color={colors.primary} />
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+          Đang tải lịch sử đo đạc...
+        </Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
       {/* Header */}
-      <View style={styles.headerSection}>
+      <View
+        style={[
+          styles.headerSection,
+          {
+            paddingTop: Math.max(16, insets.top + 8),
+            backgroundColor: colors.bg,
+            borderBottomColor: colors.hairline,
+          },
+        ]}
+      >
         <View>
-          <Text style={styles.title}>Lịch sử đo đạc</Text>
-          <Text style={styles.subtitle}>{latestPoints.length} mốc dữ liệu theo thời gian (hh:mm)</Text>
+          <Text style={[styles.eyebrow, { color: colors.accent }]}>XU HƯỚNG THEO THỜI GIAN</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Lịch sử đo đạc</Text>
         </View>
+
         <TouchableOpacity
-          style={[styles.refreshBtn, SHADOWS.sm]}
-          onPress={() => { setLoading(true); fetchHistory(); }}
+          style={[styles.refreshBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+            setLoading(true);
+            fetchHistory();
+          }}
           activeOpacity={0.7}
         >
-          <Ionicons name="refresh" size={20} color={COLORS.primary} />
+          <Icon name="refresh" size={18} color={colors.primary} />
         </TouchableOpacity>
       </View>
 
-      {/* Filter */}
-      <View style={styles.filterRow}>
-        {FILTERS.map((f) => (
-          <TouchableOpacity
-            key={f.value}
-            style={[styles.filterChip, activeFilter === f.value && styles.filterChipActive]}
-            onPress={() => setActiveFilter(f.value)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.filterText, activeFilter === f.value && styles.filterTextActive]}>
-              {f.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {error ? (
-        <View style={[styles.errorBanner, SHADOWS.sm]}>
-          <Ionicons name="cloud-offline-outline" size={16} color={COLORS.danger} />
-          <Text style={styles.errorText}>{error}</Text>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+        {/* Segmented Filter Pills */}
+        <View style={[styles.filterContainer, { backgroundColor: colors.surfaceSecondary }]}>
+          {FILTERS.map((f) => {
+            const active = activeFilter === f.value;
+            return (
+              <TouchableOpacity
+                key={f.value}
+                style={[
+                  styles.filterChip,
+                  active && [
+                    styles.filterChipActive,
+                    { backgroundColor: colors.surface, shadowColor: colors.shadow },
+                  ],
+                ]}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setActiveFilter(f.value);
+                  setSelectedPointIndex(null);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.filterText,
+                    {
+                      color: active ? colors.text : colors.textSecondary,
+                      fontWeight: active ? '800' : '500',
+                    },
+                  ]}
+                >
+                  {f.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
-      ) : null}
 
-      {/* Charts */}
-      <MetricChart
-        title="Độ dẫn điện (EC)"
-        labels={labels}
-        values={ecValues}
-        color="#2E7D32"
-        unit="mS/cm"
-        icon="flash-outline"
-        decimalPlaces={2}
-      />
-      <MetricChart
-        title="Độ ẩm đất"
-        labels={labels}
-        values={moistureValues}
-        color="#0288D1"
-        unit="%"
-        icon="water-outline"
-        decimalPlaces={1}
-      />
-      <MetricChart
-        title="Nhiệt độ đất"
-        labels={labels}
-        values={temperatureValues}
-        color="#EF6C00"
-        unit="°C"
-        icon="thermometer-outline"
-        decimalPlaces={1}
-      />
-      <MetricChart
-        title="N ước lượng"
-        labels={labels}
-        values={nEstimateValues}
-        color="#558B2F"
-        unit="mg/kg"
-        icon="leaf-outline"
-        decimalPlaces={1}
-      />
-    </ScrollView>
+        {/* (c) Interactive Inspector Banner: Shows when user taps any data point */}
+        {selectedPoint ? (
+          <View
+            style={[
+              styles.inspectorCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+              tokens.shadows.sm,
+            ]}
+          >
+            <View style={styles.inspectorHeader}>
+              <View style={styles.inspectorHeaderLeft}>
+                <Icon name="history" size={15} color={colors.accent} />
+                <Text style={[styles.inspectorTitle, { color: colors.text }]}>
+                  Mốc đo: {selectedDateStr} lúc {selectedTimeStr}
+                </Text>
+              </View>
+              <Text style={[styles.inspectorHint, { color: colors.textMuted }]}>
+                Chạm điểm để soi
+              </Text>
+            </View>
+
+            <View style={styles.inspectorGrid}>
+              <View style={styles.inspectorMetric}>
+                <Text style={[styles.inspectorLabel, { color: colors.textSecondary }]}>EC</Text>
+                <Text style={[styles.inspectorValue, { color: colors.primary }]}>
+                  {Number(selectedPoint.ec).toFixed(2)} <Text style={styles.inspectorUnit}>mS/cm</Text>
+                </Text>
+              </View>
+              <View style={styles.inspectorMetric}>
+                <Text style={[styles.inspectorLabel, { color: colors.textSecondary }]}>Độ ẩm</Text>
+                <Text style={[styles.inspectorValue, { color: colors.info }]}>
+                  {Number(selectedPoint.moisture).toFixed(0)} <Text style={styles.inspectorUnit}>%</Text>
+                </Text>
+              </View>
+              <View style={styles.inspectorMetric}>
+                <Text style={[styles.inspectorLabel, { color: colors.textSecondary }]}>Nhiệt độ</Text>
+                <Text style={[styles.inspectorValue, { color: colors.warning }]}>
+                  {Number(selectedPoint.temperature).toFixed(1)} <Text style={styles.inspectorUnit}>°C</Text>
+                </Text>
+              </View>
+              <View style={styles.inspectorMetric}>
+                <Text style={[styles.inspectorLabel, { color: colors.textSecondary }]}>Nitrogen</Text>
+                <Text style={[styles.inspectorValue, { color: colors.success }]}>
+                  {Number(selectedPoint.n_estimate).toFixed(0)} <Text style={styles.inspectorUnit}>mg</Text>
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        {error ? (
+          <View style={[styles.errorBanner, { backgroundColor: colors.dangerSoft, borderColor: colors.danger }]}>
+            <Icon name="alert" size={16} color={colors.danger} />
+            <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text>
+          </View>
+        ) : null}
+
+        {/* Charts */}
+        <MetricChart
+          title="Độ dẫn điện EC đất"
+          labels={labels}
+          values={ecValues}
+          color={colors.primary}
+          unit="mS/cm"
+          icon="zap"
+          decimalPlaces={2}
+          selectedIndex={selectedPointIndex}
+          onSelectPoint={setSelectedPointIndex}
+          colors={colors}
+          isDark={isDark}
+        />
+        <MetricChart
+          title="Độ ẩm đất"
+          labels={labels}
+          values={moistureValues}
+          color={colors.info}
+          unit="%"
+          icon="droplets"
+          decimalPlaces={1}
+          selectedIndex={selectedPointIndex}
+          onSelectPoint={setSelectedPointIndex}
+          colors={colors}
+          isDark={isDark}
+        />
+        <MetricChart
+          title="Nhiệt độ đất"
+          labels={labels}
+          values={temperatureValues}
+          color={colors.warning}
+          unit="°C"
+          icon="thermometer"
+          decimalPlaces={1}
+          selectedIndex={selectedPointIndex}
+          onSelectPoint={setSelectedPointIndex}
+          colors={colors}
+          isDark={isDark}
+        />
+        <MetricChart
+          title="Nitrogen ước lượng"
+          labels={labels}
+          values={nEstimateValues}
+          color={colors.success}
+          unit="mg/kg"
+          icon="sprout"
+          decimalPlaces={1}
+          selectedIndex={selectedPointIndex}
+          onSelectPoint={setSelectedPointIndex}
+          colors={colors}
+          isDark={isDark}
+        />
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  content: {
-    padding: 16,
-    gap: 12,
-    paddingBottom: 32,
   },
   loadingContainer: {
     flex: 1,
-    backgroundColor: COLORS.bg,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
   },
   loadingText: {
-    color: COLORS.textSecondary,
-    fontSize: 15,
+    fontSize: 14,
   },
   headerSection: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+  },
+  eyebrow: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
   },
   title: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '800',
-    color: COLORS.primaryDark,
-    letterSpacing: -0.3,
-  },
-  subtitle: {
-    color: COLORS.textSecondary,
+    letterSpacing: -0.4,
     marginTop: 2,
-    fontSize: 13,
   },
   refreshBtn: {
-    backgroundColor: COLORS.white,
-    padding: 10,
-    borderRadius: RADIUS.sm,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-
-  // Filter
-  filterRow: {
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    padding: 16,
+    gap: 14,
+    paddingBottom: 40,
+  },
+  filterContainer: {
     flexDirection: 'row',
-    gap: 8,
+    borderRadius: 12,
+    padding: 4,
+    gap: 4,
   },
   filterChip: {
-    paddingHorizontal: 14,
+    flex: 1,
+    alignItems: 'center',
     paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    borderRadius: 8,
   },
   filterChipActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   filterText: {
-    color: COLORS.textSecondary,
+    fontSize: 12,
+  },
+  inspectorCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  inspectorHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  inspectorHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  inspectorTitle: {
     fontSize: 13,
+    fontWeight: '700',
+  },
+  inspectorHint: {
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  inspectorGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(128,128,128,0.15)',
+    paddingTop: 8,
+  },
+  inspectorMetric: {
+    alignItems: 'center',
+  },
+  inspectorLabel: {
+    fontSize: 11,
     fontWeight: '600',
   },
-  filterTextActive: {
-    color: COLORS.white,
+  inspectorValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 1,
   },
-
-  // Error
+  inspectorUnit: {
+    fontSize: 10,
+    fontWeight: '500',
+  },
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FFF5F5',
-    borderRadius: RADIUS.sm,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#FFCDD2',
-    padding: 10,
+    padding: 12,
   },
   errorText: {
-    color: COLORS.danger,
     fontSize: 13,
     flex: 1,
-    fontWeight: '500',
+    fontWeight: '600',
   },
-
-  // Chart Card
   chartCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.lg,
+    borderRadius: 16,
+    borderWidth: 1,
     padding: 16,
   },
   chartHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
+    marginBottom: 8,
   },
-  chartIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  chartHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  chartIconBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   chartTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: COLORS.primaryDark,
-  },
-  chartUnit: {
-    fontSize: 11,
-    color: COLORS.textMuted,
-    marginTop: 1,
-  },
-  chartStat: {
-    marginLeft: 'auto',
-    alignItems: 'flex-end',
-  },
-  chartStatValue: {
-    fontSize: 20,
+    fontSize: 14,
     fontWeight: '800',
   },
-  chartStatLabel: {
-    fontSize: 10,
-    color: COLORS.textMuted,
+  chartStat: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 3,
+  },
+  chartStatValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
+  chartStatUnit: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  chartContainer: {
+    alignItems: 'center',
   },
   chart: {
-    borderRadius: RADIUS.md,
-    marginLeft: -8,
+    borderRadius: 12,
+    marginLeft: -16,
   },
   emptyChart: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 40,
-    gap: 8,
+    paddingVertical: 36,
+    gap: 6,
   },
   emptyText: {
-    color: COLORS.textSecondary,
     fontSize: 13,
   },
 });
