@@ -80,40 +80,53 @@ def get_history(db: Session = Depends(get_db)):
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(data: ChatRequest, db: Session = Depends(get_db)):
-    readings = (
-        db.query(SensorReading)
-        .order_by(SensorReading.timestamp.desc())
-        .limit(10)
-        .all()
-    )
-    if not readings:
-        raise HTTPException(status_code=404, detail="Chưa có dữ liệu cảm biến để tư vấn")
+    # Đánh giá chính xác include_sensors
+    should_include = True
+    if data.include_sensors is False or str(data.include_sensors).strip().lower() in ("false", "0", "no", "off"):
+        should_include = False
 
-    averages = {
-        "ec": fmean(reading.ec for reading in readings),
-        "moisture": fmean(reading.moisture for reading in readings),
-        "temperature": fmean(reading.temperature for reading in readings),
-        "n_estimate": fmean(reading.n_estimate for reading in readings),
-    }
+    target_plant = data.plant if data.plant else "cải bẹ xanh"
+    target_disease = data.disease if data.disease else "bệnh cây trồng"
+
     system_prompt = f"""
-Bạn là chuyên gia nông nghiệp tư vấn trồng cải bẹ xanh.
-Dữ liệu cảm biến trung bình của {len(readings)} bản ghi mới nhất:
-- EC trung bình: {averages['ec']:.2f}
-- Độ ẩm trung bình: {averages['moisture']:.2f}
-- Nhiệt độ trung bình: {averages['temperature']:.2f} °C
-- N ước lượng trung bình: {averages['n_estimate']:.2f}
-
-Lưu ý: N là ước lượng tương đối từ EC, không phải đo trực tiếp.
-Yêu cầu định dạng câu trả lời:
-- Ngôn ngữ chính là tiếng Việt có dấu, tuyệt đối không dùng tiếng Việt không dấu.
-- Chỉ trả về văn bản thuần, không dùng LaTeX, không dùng Markdown, không emoji.
-- Tối đa 4 dòng, mỗi dòng ngắn gọn, dễ hiểu.
-- Nếu có số liệu thì ghi theo dạng: "EC: 1.2 mS/cm".
-- Dòng cuối luôn là khuyến nghị hành động cụ thể cho 24 giờ tới.
-
-Hãy trả lời thực tế, đơn giản, phù hợp với nông dân nhỏ lẻ.
+Bạn là chuyên gia bảo vệ thực vật và nông nghiệp tư vấn cho cây {target_plant} đang gặp vấn đề về {target_disease}.
+BẮT BUỘC TUÂN THỦ CÁC QUY TẮC SAU:
+1. BẮT BUỘC viết hoàn toàn bằng TIẾNG VIỆT CHUẨN CÓ DẤU ĐẦY ĐỦ (tuyệt đối KHÔNG viết không dấu, KHÔNG dùng tiếng Anh).
+2. Chỉ trả về văn bản thuần (plain text), không dùng LaTeX, không dùng định dạng Markdown, không dùng dấu sao, không emoji.
+3. Trình bày tối đa 4 dòng, mỗi dòng ngắn gọn, súc tích, tập trung vào nguyên nhân bệnh và loại thuốc/biện pháp điều trị đặc hiệu cho {target_plant}.
+4. Dòng cuối cùng luôn là khuyến nghị hành động cụ thể cho người nông dân trong 24 giờ tới.
 """
 
+    if should_include:
+        readings = (
+            db.query(SensorReading)
+            .order_by(SensorReading.timestamp.desc())
+            .limit(10)
+            .all()
+        )
+        if readings:
+            averages = {
+                "ec": fmean(reading.ec for reading in readings),
+                "moisture": fmean(reading.moisture for reading in readings),
+                "temperature": fmean(reading.temperature for reading in readings),
+                "n_estimate": fmean(reading.n_estimate for reading in readings),
+            }
+            system_prompt = f"""
+Bạn là chuyên gia nông nghiệp tư vấn trồng {target_plant}.
+BẮT BUỘC TUÂN THỦ CÁC QUY TẮC SAU:
+1. BẮT BUỘC viết hoàn toàn bằng TIẾNG VIỆT CHUẨN CÓ DẤU ĐẦY ĐỦ (tuyệt đối KHÔNG viết không dấu).
+2. Chỉ trả về văn bản thuần, không dùng LaTeX, không dùng Markdown, không dấu sao, không emoji.
+3. Tối đa 4 dòng, mỗi dòng ngắn gọn, dễ hiểu.
+4. Nếu có số liệu thì ghi theo dạng: "EC: 1.2 mS/cm".
+5. Dòng cuối luôn là khuyến nghị hành động cụ thể cho 24 giờ tới.
+
+Dữ liệu cảm biến trung bình đo được từ vườn {target_plant}:
+- EC trung bình: {averages['ec']:.2f} mS/cm
+- Độ ẩm trung bình: {averages['moisture']:.2f} %
+- Nhiệt độ trung bình: {averages['temperature']:.2f} °C
+- Dinh dưỡng N ước lượng: {averages['n_estimate']:.2f}
+"""
+    
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="Chưa cấu hình biến môi trường GEMINI_API_KEY")

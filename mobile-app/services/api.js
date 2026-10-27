@@ -28,8 +28,13 @@ export const getSensorHistory = async () => {
   return response.data;
 };
 
-export const askChatbot = async (question) => {
-  const response = await api.post('/chat', { question });
+export const askChatbot = async (question, includeSensors = true, plant = null, disease = null) => {
+  const response = await api.post('/chat', {
+    question,
+    include_sensors: includeSensors,
+    plant,
+    disease,
+  });
   return response.data;
 };
 

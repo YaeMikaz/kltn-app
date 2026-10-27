@@ -19,6 +19,9 @@ class SensorOut(SensorIn):
 
 class ChatRequest(BaseModel):
     question: str
+    include_sensors: Optional[bool | str] = True
+    plant: Optional[str] = None
+    disease: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

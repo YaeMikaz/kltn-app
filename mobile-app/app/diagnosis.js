@@ -323,7 +323,19 @@ export default function DiagnosisScreen() {
             {/* Direct Synergistic Action: Ask AI about this result */}
             <TouchableOpacity
               style={[styles.askAiBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
-              onPress={() => router.push('/chatbot')}
+              onPress={() => {
+                const prompt = `Tôi có cây ${result.plant} bị ${result.disease} (Mức độ: ${result.severity}). Hãy tư vấn chi tiết cách điều trị và phòng ngừa trong 24 giờ tới.`;
+                router.push({
+                  pathname: '/chatbot',
+                  params: {
+                    initialQuestion: prompt,
+                    includeSensors: 'false',
+                    plant: result.plant,
+                    disease: result.disease,
+                    contextTs: String(Date.now()),
+                  },
+                });
+              }}
               activeOpacity={0.8}
             >
               <Icon name="bot" size={18} color={colors.accent} />

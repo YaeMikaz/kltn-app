@@ -13,6 +13,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { askChatbot } from '../services/api';
@@ -116,41 +118,97 @@ function MessageBubble({ item, colors, tokens }) {
   );
 }
 
+const CHAT_STORAGE_KEY = '@kltn_chat_history';
+const CHAT_CONTEXT_KEY = '@kltn_chat_context';
+const DEFAULT_CHAT_CONTEXT = { plant: null, disease: null, includeSensors: true };
+
 export default function ChatbotScreen() {
   const insets = useSafeAreaInsets();
   const { colors, tokens } = useTheme();
+  const params = useLocalSearchParams();
   const idRef = useRef(0);
+  const isLoadedRef = useRef(false);
+  const handledAutoPromptRef = useRef('');
+  const contextRef = useRef(DEFAULT_CHAT_CONTEXT);
 
   const [messages, setMessages] = useState([]);
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [chatContext, setChatContext] = useState(DEFAULT_CHAT_CONTEXT);
 
   const nextId = () => {
     idRef.current += 1;
-    return `msg-${idRef.current}`;
+    return `msg-${Date.now()}-${idRef.current}`;
   };
 
-  const handleClearChat = () => {
-    Alert.alert('Xóa đoạn chat', 'Bạn có chắc chắn muốn xóa toàn bộ lịch sử tư vấn hiện tại?', [
-      { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Xóa tất cả',
-        style: 'destructive',
-        onPress: () => {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-          setMessages([]);
-          setQuestion('');
-          setError('');
-          Keyboard.dismiss();
-        },
-      },
-    ]);
+  const updateContext = (next) => {
+    contextRef.current = { ...contextRef.current, ...next };
+    setChatContext(contextRef.current);
   };
 
-  const handleSend = async (text) => {
+  // Load chat history + context from AsyncStorage on mount
+  useEffect(() => {
+    const loadChatHistory = async () => {
+      try {
+        const [storedMessages, storedContext] = await Promise.all([
+          AsyncStorage.getItem(CHAT_STORAGE_KEY),
+          AsyncStorage.getItem(CHAT_CONTEXT_KEY),
+        ]);
+        if (storedMessages) {
+          const parsed = JSON.parse(storedMessages);
+          if (Array.isArray(parsed)) {
+            setMessages(parsed);
+          }
+        }
+        if (storedContext) {
+          const parsedContext = JSON.parse(storedContext);
+          if (parsedContext && typeof parsedContext === 'object') {
+            contextRef.current = { ...DEFAULT_CHAT_CONTEXT, ...parsedContext };
+            setChatContext(contextRef.current);
+          }
+        }
+      } catch (e) {
+        console.error('Lỗi khi tải lịch sử chat:', e);
+      } finally {
+        isLoadedRef.current = true;
+      }
+    };
+    loadChatHistory();
+  }, []);
+
+  // Save chat history to AsyncStorage when messages change
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    AsyncStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages)).catch((e) => {
+      console.error('Lỗi khi lưu lịch sử chat:', e);
+    });
+  }, [messages]);
+
+  // Persist plant/disease context so follow-up questions stay on topic
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    AsyncStorage.setItem(CHAT_CONTEXT_KEY, JSON.stringify(chatContext)).catch((e) => {
+      console.error('Lỗi khi lưu ngữ cảnh chat:', e);
+    });
+  }, [chatContext]);
+
+  const handleSend = async (text, overrides = {}) => {
     const trimmed = (text || question).trim();
     if (!trimmed || loading) return;
+
+    const nextContext = {
+      plant: 'plant' in overrides ? overrides.plant : contextRef.current.plant,
+      disease: 'disease' in overrides ? overrides.disease : contextRef.current.disease,
+      includeSensors:
+        'includeSensors' in overrides
+          ? overrides.includeSensors
+          : contextRef.current.includeSensors,
+    };
+
+    if (Object.keys(overrides).length > 0) {
+      updateContext(nextContext);
+    }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setMessages((prev) => [{ id: nextId(), role: 'user', text: trimmed }, ...prev]);
@@ -159,7 +217,12 @@ export default function ChatbotScreen() {
     setLoading(true);
 
     try {
-      const data = await askChatbot(trimmed);
+      const data = await askChatbot(
+        trimmed,
+        nextContext.includeSensors,
+        nextContext.plant,
+        nextContext.disease,
+      );
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       setMessages((prev) => [
         { id: nextId(), role: 'bot', text: simplifyAnswerText(data?.answer) },
@@ -175,6 +238,47 @@ export default function ChatbotScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Handle auto-prompt passed from Diagnosis screen or navigation params
+  useEffect(() => {
+    const prompt = params?.initialQuestion;
+    if (!prompt) return;
+    const promptKey = `${prompt}|${params?.contextTs || ''}`;
+    if (handledAutoPromptRef.current === promptKey) return;
+    handledAutoPromptRef.current = promptKey;
+    handleSend(prompt, {
+      plant: params?.plant || null,
+      disease: params?.disease || null,
+      includeSensors: params?.includeSensors !== 'false',
+    });
+  }, [
+    params?.initialQuestion,
+    params?.includeSensors,
+    params?.plant,
+    params?.disease,
+    params?.contextTs,
+  ]);
+
+  const handleClearChat = () => {
+    Alert.alert('Xóa đoạn chat', 'Bạn có chắc chắn muốn xóa toàn bộ lịch sử tư vấn hiện tại?', [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Xóa tất cả',
+        style: 'destructive',
+        onPress: () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+          setMessages([]);
+          setQuestion('');
+          setError('');
+          contextRef.current = DEFAULT_CHAT_CONTEXT;
+          setChatContext(DEFAULT_CHAT_CONTEXT);
+          AsyncStorage.removeItem(CHAT_STORAGE_KEY).catch(() => {});
+          AsyncStorage.removeItem(CHAT_CONTEXT_KEY).catch(() => {});
+          Keyboard.dismiss();
+        },
+      },
+    ]);
   };
 
   const showPrompts = messages.length === 0 && !loading;
